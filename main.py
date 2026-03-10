@@ -1,795 +1,721 @@
-"""
-Spend Analytics Dashboard — Page principale
-Priorités d'affichage :
-  1. Waterfall charts (avancement des dépenses)
-  2. Pareto 80/20 par dimension (vendors, PSCS, requesters, groupes)
-  3. Heatmap + évolution empilée
-  4. Donuts / treemap / scatter complémentaires
-"""
-
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data_processor import SpendDataProcessor
-from visualizations import WaterfallCharts, ParetoCharts, TemporalCharts, StructureCharts
+from visualizations import OverviewCharts, CapexOpexCharts, ParetoCharts, ClusterCharts, CapexOpexTabCharts
 
-# ─── Config ───────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Spend Analytics",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Spend Analytics – Lafarge", page_icon="📊", layout="wide")
 
+# ─── High-contrast CSS ────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-/* Titres d'onglets */
-.stTabs [data-baseweb="tab"] { font-size: 14px; font-weight: 600; padding: 10px 18px; }
-/* Bordure gauche sur les métriques */
-[data-testid="metric-container"] {
-    border-left: 4px solid #2563EB;
-    padding-left: 12px;
-    background: #F8FAFC;
-    border-radius: 6px;
-}
-/* Bandeau section */
-.section-banner {
-    background: linear-gradient(90deg, #1E3A5F 0%, #2563EB 100%);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 6px;
+  /* ── Base ── */
+  html, body,
+  [data-testid="stAppViewContainer"],
+  .main, .block-container {
+    background-color: #F4F6F9 !important;
+    color: #1A1A2E !important;
+  }
+  * { font-family: 'Segoe UI', Arial, sans-serif; }
+
+  /* ── Sidebar background ── */
+  [data-testid="stSidebar"] {
+    background-color: #1B3A5C !important;
+  }
+
+  /* White text for sidebar labels, headers, markdown */
+  [data-testid="stSidebar"] h1,
+  [data-testid="stSidebar"] h2,
+  [data-testid="stSidebar"] h3,
+  [data-testid="stSidebar"] p,
+  [data-testid="stSidebar"] label,
+  [data-testid="stSidebar"] .stMarkdown p,
+  [data-testid="stSidebar"] .stRadio label,
+  [data-testid="stSidebar"] .stCheckbox label {
+    color: #FFFFFF !important;
+  }
+
+  /* Selectbox + multiselect: white bg, dark text so selected value is readable */
+  [data-testid="stSidebar"] [data-baseweb="select"] {
+    background-color: #FFFFFF !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background-color: #FFFFFF !important;
+    color: #1A1A2E !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] span,
+  [data-testid="stSidebar"] [data-baseweb="select"] div {
+    color: #1A1A2E !important;
+  }
+  /* Multiselect tags */
+  [data-testid="stSidebar"] [data-baseweb="tag"] {
+    background-color: #2980B9 !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="tag"] span {
+    color: #FFFFFF !important;
+  }
+  /* Date input */
+  [data-testid="stSidebar"] [data-baseweb="input"] > div {
+    background-color: #FFFFFF !important;
+  }
+  [data-testid="stSidebar"] input {
+    color: #1A1A2E !important;
+    background-color: #FFFFFF !important;
+  }
+  /* Dropdown options panel */
+  [data-baseweb="popover"] [data-baseweb="menu"] {
+    background-color: #FFFFFF !important;
+  }
+  [data-baseweb="popover"] [data-baseweb="menu"] li {
+    color: #1A1A2E !important;
+  }
+  [data-baseweb="popover"] [data-baseweb="menu"] li:hover {
+    background-color: #EBF2FA !important;
+  }
+
+  /* ── Page titles ── */
+  h1,h2,h3,h4,h5,h6 {
+    color: #1B3A5C !important;
+    font-family: 'Segoe UI', Arial, sans-serif !important;
+  }
+
+  /* ── Section banners ── */
+  .section-banner {
+    background: linear-gradient(90deg, #1B3A5C 0%, #2980B9 100%);
+    color: #FFFFFF !important;
+    padding: 11px 20px; border-radius: 7px;
+    font-weight: 700; font-size: 15px;
+    margin: 20px 0 10px 0; letter-spacing: 0.3px;
+  }
+  .section-banner * { color: #FFFFFF !important; }
+
+  .section-sub {
+    background: #FFFFFF;
+    color: #1B3A5C !important;
+    padding: 7px 16px;
+    border-left: 4px solid #2980B9;
+    border-radius: 0 6px 6px 0;
+    font-weight: 700; font-size: 14px;
+    margin: 12px 0 6px 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+
+  /* ── Tabs ── */
+  .stTabs [data-baseweb="tab"] {
+    font-size: 14px; font-weight: 700;
+    color: #1B3A5C !important;
+  }
+  .stTabs [aria-selected="true"] {
+    border-bottom: 3px solid #E74C3C !important;
+    color: #E74C3C !important;
+  }
+
+  /* ── KPI metrics ── */
+  [data-testid="stMetric"] {
+    background: #FFFFFF;
+    border: 1px solid #D5E8F5;
+    border-radius: 10px;
+    padding: 14px 18px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.07);
+  }
+  [data-testid="stMetricLabel"] {
     font-weight: 700;
-    font-size: 14px;
-    margin-bottom: 8px;
-}
+    color: #1B3A5C !important;
+    font-size: 0.82rem !important;
+  }
+  [data-testid="stMetricValue"] {
+    color: #1A1A2E !important;
+    font-size: 1.3rem !important;
+    font-weight: 800 !important;
+  }
+  [data-testid="stMetricDelta"] svg { display: none; }
+  [data-testid="stMetricDelta"][data-direction="increase"] > div { color: #E74C3C !important; }
+  [data-testid="stMetricDelta"][data-direction="decrease"] > div { color: #27AE60 !important; }
+
+  /* ── Plotly chart text ── */
+  .js-plotly-plot .plotly .gtitle,
+  .js-plotly-plot .plotly .xtitle,
+  .js-plotly-plot .plotly .ytitle,
+  .js-plotly-plot .plotly .g-xtitle text,
+  .js-plotly-plot .plotly .g-ytitle text,
+  .js-plotly-plot .plotly .xtick text,
+  .js-plotly-plot .plotly .ytick text,
+  .js-plotly-plot .plotly .legendtext,
+  .js-plotly-plot .plotly .annotation-text {
+    fill: #2C3E50 !important;
+    color: #2C3E50 !important;
+  }
+  
+  /* Treemap labels - force white for contrast on colored blocks */
+  .js-plotly-plot .treemap .treetext,
+  .js-plotly-plot .treemap .treetext text,
+  .js-plotly-plot .treemap tspan {
+    fill: white !important;
+    color: white !important;
+  }
+  
+  /* Generic text fallback (not important to allow chart-specific overrides) */
+  .js-plotly-plot text {
+    fill: #2C3E50;
+  }
+
+  /* ── Dividers ── */
+  hr { border-color: #D5E8F5; margin: 14px 0; }
+  
+  /* ── Buttons ── */
+  .stButton > button {
+    background-color: #E74C3C !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
+# ─── Session state ────────────────────────────────────────────────────────────
+if 'data_loaded' not in st.session_state: st.session_state.data_loaded = False
+if 'df'          not in st.session_state: st.session_state.df          = None
 
-# ─── Session state ─────────────────────────────────────────────────────────────
-def _init():
-    if 'data_loaded'   not in st.session_state: st.session_state.data_loaded   = False
-    if 'df'            not in st.session_state: st.session_state.df            = None
-    if 'processor'     not in st.session_state: st.session_state.processor     = SpendDataProcessor()
-    if 'drill_context' not in st.session_state: st.session_state.drill_context = {}
+processor   = SpendDataProcessor()
+MONTHS_FULL = ['January','February','March','April','May','June',
+               'July','August','September','October','November','December']
 
 
-# ─── Sidebar filtres ──────────────────────────────────────────────────────────
-def _sidebar_filters(df: pd.DataFrame) -> dict:
+# ══════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════════════════════
+def _sidebar_filters(df):
     st.sidebar.header("🔍 Filtres")
+    if st.sidebar.button("🔄 Reset"):
+        st.session_state.clear(); st.rerun()
+    st.sidebar.divider()
     f = {}
 
-    if 'Date' in df.columns and not df['Date'].isna().all():
-        st.sidebar.subheader("📅 Période")
+    st.sidebar.markdown('**📅 Période**')
+    years = sorted(df['Année'].dropna().unique().astype(int).tolist(), reverse=True)
+    f['year'] = st.sidebar.selectbox('Année', years, index=0)
+    col_ytd, col_mtd = st.sidebar.columns(2)
+    f['year_to_date']  = col_ytd.checkbox('YTD', value=False)
+    f['month_to_date'] = col_mtd.checkbox('MTD', value=False)
+    available_months = ([m for m in MONTHS_FULL if m in df['Nom_Mois'].unique()]
+                        if 'Nom_Mois' in df.columns else [])
+    f['months'] = st.sidebar.multiselect('Mois', available_months)
+    if 'Date' in df.columns:
         mn, mx = df['Date'].min().date(), df['Date'].max().date()
-        dr = st.sidebar.date_input("Période", value=(mn, mx), min_value=mn, max_value=mx)
-        f['date_range'] = dr
+        f['date_range'] = st.sidebar.date_input('Plage personnalisée', value=(mn,mx), min_value=mn, max_value=mx)
+    else:
+        f['date_range'] = ()
 
-    st.sidebar.subheader("🏢 Fournisseurs")
-    f['vendors'] = st.sidebar.multiselect(
-        "Fournisseurs", sorted(df['Vendor Name'].unique()), default=None)
+    st.sidebar.divider()
+    st.sidebar.markdown('**🏷️ Dimensions**')
+    dim_map = [
+        ('company_code',     'Company Code descr',   'Company Code'),
+        ('vendor',           'Vendor Name',           'Vendor'),
+        ('requestor',        'Requester',             'Requestor'),
+        ('wbs',              'WBS Element ID',        'WBS Element ID'),
+        ('purchasing_group', 'Purchasing Group Name', 'Purchasing Group'),
+        ('cost_center',      'Cost Center ID',        'Cost Center ID'),
+        ('gl_account',       'GL Account Name',       'GL Account Name'),
+        ('cluster',          'PSCS Cluster',          'Cluster'),
+        ('category',         'PSCS Category',         'Category'),
+    ]
+    for key, col, label in dim_map:
+        if col in df.columns:
+            opts = sorted(df[col].dropna().unique().tolist())
+            f[key] = st.sidebar.multiselect(label, opts, key=f'filter_{key}')
+        else:
+            f[key] = []
 
-    st.sidebar.subheader("📦 PSCS")
-    f['clusters'] = st.sidebar.multiselect(
-        "Clusters", sorted(df['PSCS Cluster'].unique()), default=None)
-    f['categories'] = st.sidebar.multiselect(
-        "Catégories", sorted(df['PSCS Category'].unique()), default=None)
-
-    st.sidebar.subheader("👥 Requesters")
-    f['requesters'] = st.sidebar.multiselect(
-        "Requesters", sorted(df['Requester'].unique()), default=None)
-
-    st.sidebar.subheader("💰 Montants")
-    c1, c2 = st.sidebar.columns(2)
-    f['min_spend'] = c1.number_input("Min (€)", min_value=0.0, value=0.0, step=100.0)
-    max_def = float(df['Total  spend'].max()) if 'Total  spend' in df.columns else 0.0
-    f['max_spend'] = c2.number_input("Max (€)", min_value=0.0, value=max_def, step=1000.0)
-
+    st.sidebar.divider()
+    st.sidebar.markdown('**💰 Type de Dépense**')
+    f['capex_opex'] = st.sidebar.radio('Type', ['All','CAPEX only','OPEX only'], horizontal=True, index=0)
     return f
 
 
-# ─── KPIs ─────────────────────────────────────────────────────────────────────
-def _kpis(stats: dict):
+# ══════════════════════════════════════════════════════════════════════════════
+# KPIs
+# ══════════════════════════════════════════════════════════════════════════════
+def _kpis(comp, year):
+    s, d, has = comp['current'], comp['deltas'], comp['has_comparison']
+    prev = year - 1 if year else None
     st.markdown('<div class="section-banner">📈 Indicateurs Clés</div>', unsafe_allow_html=True)
+    if has and prev:
+        st.caption(
+            f'Δ = {year} vs {prev} &nbsp;|&nbsp; '
+            f'<span style="color:#E74C3C;font-weight:700">▲ hausse</span> &nbsp; '
+            f'<span style="color:#27AE60;font-weight:700">▼ baisse</span>',
+            unsafe_allow_html=True)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("💶 Total Spend",  f"{stats['total_spend']:,.0f} €")
-    c2.metric("📋 Commandes",    f"{stats['total_rows']:,}")
-    c3.metric("🏢 Fournisseurs", f"{stats['unique_vendors']:,}")
-    c4.metric("👥 Requesters",   f"{stats['unique_requesters']:,}")
-    c5.metric("📦 Catégories",   f"{stats['unique_categories']:,}")
+    _fmt     = lambda k: f"{d[k]:+,.1f} kCHF" if has else None
+    _fmt_pct = lambda k: f"{d[k]:+.1f} pp"   if has else None
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    c6, c7, c8, c9, c10 = st.columns(5)
-    total = stats['total_spend'] or 1
-    c6.metric("🟣 CAPEX",
-              f"{stats['total_capex']:,.0f} €",
-              f"{stats['total_capex']/total*100:.1f}%")
-    c7.metric("🔵 OPEX",
-              f"{stats['total_opex']:,.0f} €",
-              f"{stats['total_opex']/total*100:.1f}%")
-    c8.metric("🔷 FI Spend",
-              f"{stats['total_fi']:,.0f} €",
-              f"{stats['total_fi']/total*100:.1f}%")
-    c9.metric("🔹 MM Spend",
-              f"{stats['total_mm']:,.0f} €",
-              f"{stats['total_mm']/total*100:.1f}%")
-    if stats['date_min'] and stats['date_max']:
-        c10.metric("📅 Période",
-                   f"{stats['date_min'].strftime('%m/%Y')}",
-                   f"→ {stats['date_max'].strftime('%m/%Y')}")
+    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
+    c1.metric('💰 Total Spend', f"{s['total_spend']:,.1f} kCHF", _fmt('total_spend'))
+    c2.metric('🏗️ CAPEX',       f"{s['total_capex']:,.1f} kCHF", _fmt('total_capex'))
+    c3.metric('📋 OPEX',        f"{s['total_opex']:,.1f} kCHF",  _fmt('total_opex'))
+    c4.metric('📑 FI Spend',    f"{s['total_fi']:,.1f} kCHF",    _fmt('total_fi'))
+    c5.metric('📦 MM Spend',    f"{s['total_mm']:,.1f} kCHF",    _fmt('total_mm'))
+    c6.metric('🏗️ CAPEX %',     f"{s['capex_pct']:.1f} %",       _fmt_pct('capex_pct'))
+    c7.metric('📋 OPEX %',      f"{s['opex_pct']:.1f} %",        _fmt_pct('opex_pct'))
+    st.write('')
+    c1,c2,c3,c4,c5 = st.columns(5)
+    c1.metric('📑 Commandes',    f"{s['total_rows']:,}")
+    c2.metric('🏢 Fournisseurs', f"{s['unique_vendors']:,}")
+    c3.metric('👥 Requesters',   f"{s['unique_requesters']:,}")
+    c4.metric('📦 Catégories',   f"{s['unique_categories']:,}")
+    c5.metric('🏷️ Clusters',     f"{s.get('unique_clusters',0):,}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ONGLETS PRINCIPAUX
+# HELPER – year picker
 # ══════════════════════════════════════════════════════════════════════════════
+def _variation_year_picker(df, key):
+    all_years  = sorted(df['Année'].dropna().unique().astype(int).tolist())
+    selectable = [y for y in all_years if y + 1 in all_years] or all_years
+    desc       = sorted(selectable, reverse=True)
+    default    = min(1, len(desc) - 1)
+    col, _     = st.columns([2, 5])
+    with col:
+        chosen = st.selectbox("📅 Année de référence (Y vs Y+1)", desc, index=default, key=key)
+    return int(chosen)
 
-def _tab_waterfall(df: pd.DataFrame):
-    """Onglet 1 — Waterfall (priorité absolue)"""
-    st.markdown('<div class="section-banner">📊 Waterfall — Avancement & Variations des Dépenses</div>',
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB – OVERVIEW
+# ══════════════════════════════════════════════════════════════════════════════
+def _tab_overview(filtered_df):
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — VARIATION CHARTS  (one shared year picker for all 4)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>📉 Analyses de Variation (Y vs Y+1)</div>",
                 unsafe_allow_html=True)
-    st.caption("Les graphiques waterfall montrent mois par mois comment les dépenses s'accumulent "
-               "et où les variations positives / négatives se produisent.")
 
-    # ── Ligne 1 : mensuel simple + cumulatif ──────────────────────────────
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = WaterfallCharts.mensuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_1")
+    # Single year picker drives ALL variation charts below
+    yr   = _variation_year_picker(filtered_df, key="yr_variation")
+    yr1  = yr + 1
+
+    # Row 1 — Cluster variation (full width)
+    st.markdown("<div class='section-sub'>📊 Variation du Spend par Cluster</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(OverviewCharts.cluster_variation_waterfall(filtered_df, yr),
+                    use_container_width=True)
+
+    st.write("")
+
+    # Row 2 — CAPEX monthly | OPEX monthly
+    col_c, col_o = st.columns(2)
+    with col_c:
+        st.markdown(f"<div class='section-sub'>🏗️ Variation CAPEX mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexCharts.capex_monthly_variation(filtered_df, yr),
+                        use_container_width=True)
+    with col_o:
+        st.markdown(f"<div class='section-sub'>📋 Variation OPEX mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexCharts.opex_monthly_variation(filtered_df, yr),
+                        use_container_width=True)
+
+    st.write("")
+
+    # Row 3 — Total Spend variation (full width)
+    st.markdown(f"<div class='section-sub'>📈 Variation Total Spend — {yr} vs {yr1}</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(CapexOpexCharts.total_spend_yearly_variation(filtered_df, yr),
+                    use_container_width=True)
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — CLUSTER & SPEND  (no year picker — reflects sidebar filters)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🗺️ Vue d'ensemble par Cluster & CAPEX/OPEX</div>",
+                unsafe_allow_html=True)
+
+    # Row 1 — Treemap | Cluster bar
+    col_tree, col_bar = st.columns([3, 2])
+    with col_tree:
+        st.markdown("<div class='section-sub'>🌳 Treemap Cluster → Catégorie</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(OverviewCharts.cluster_category_treemap(filtered_df),
+                        use_container_width=True)
+    with col_bar:
+        st.markdown("<div class='section-sub'>📊 Spend par Cluster</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(OverviewCharts.cluster_spend_bar(filtered_df),
+                        use_container_width=True)
+
+    st.write("")
+
+    # Row 2 — Top 10 Company Codes (full width)
+    st.markdown("<div class='section-sub'>🏢 Top 10 Company Code</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(OverviewCharts.top10_company_codes(filtered_df),
+                    use_container_width=True)
+
+    st.write("")
+
+    # Row 3 — Stacked CAPEX/OPEX by year (full width)
+    st.markdown("<div class='section-sub'>📊 CAPEX + OPEX par Année — Stacked</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(CapexOpexCharts.capex_opex_stacked_bar(filtered_df),
+                    use_container_width=True)
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — PARETO
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🎯 Analyses Pareto — Top entités générant 80% du Spend</div>",
+                unsafe_allow_html=True)
+
+    col_v, col_r = st.columns(2)
+    with col_v:
+        st.markdown("<div class='section-sub'>🏢 Pareto Fournisseurs</div>", unsafe_allow_html=True)
+        st.plotly_chart(ParetoCharts.vendor_pareto(filtered_df), use_container_width=True)
+    with col_r:
+        st.markdown("<div class='section-sub'>👥 Pareto Requesters</div>", unsafe_allow_html=True)
+        st.plotly_chart(ParetoCharts.requester_pareto(filtered_df), use_container_width=True)
+
+    st.write("")
+    col_cc, col_gl = st.columns(2)
+    with col_cc:
+        st.markdown("<div class='section-sub'>🏦 Pareto Cost Center</div>", unsafe_allow_html=True)
+        st.plotly_chart(ParetoCharts.cost_center_pareto(filtered_df), use_container_width=True)
+    with col_gl:
+        st.markdown("<div class='section-sub'>📒 Pareto GL Account</div>", unsafe_allow_html=True)
+        st.plotly_chart(ParetoCharts.gl_account_pareto(filtered_df), use_container_width=True)
+
+    st.write("")
+    _, col_pg, _ = st.columns([1, 3, 1])
+    with col_pg:
+        st.markdown("<div class='section-sub'>🛒 Pareto Purchasing Group</div>", unsafe_allow_html=True)
+        st.plotly_chart(ParetoCharts.purchasing_group_pareto(filtered_df), use_container_width=True)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB – CLUSTER
+# ══════════════════════════════════════════════════════════════════════════════
+def _tab_cluster(filtered_df):
+
+    # ── shared year picker (used by ALL variation charts in this tab) ─────────
+    yr  = _variation_year_picker(filtered_df, key="yr_cluster_tab")
+    yr1 = yr + 1
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — GLOBAL CLUSTER VIEW
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🗺️ Vue Globale par Cluster</div>",
+                unsafe_allow_html=True)
+
+    # Row 1: spend bar (full width)
+    st.markdown("<div class='section-sub'>📊 Spend par Cluster</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(ClusterCharts.spend_per_cluster(filtered_df),
+                    use_container_width=True)
+
+    st.write("")
+
+    # Row 2: cluster variation waterfall (full width — needs space for many clusters)
+    st.markdown(f"<div class='section-sub'>📉 Variation Spend par Cluster — {yr} vs {yr1}</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(ClusterCharts.cluster_yoy_variation(filtered_df, yr),
+                    use_container_width=True)
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — FOCUS CLUSTER  (inline cluster picker)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🔍 Focus Cluster</div>",
+                unsafe_allow_html=True)
+
+    clusters = sorted(filtered_df["PSCS Cluster"].dropna().unique().tolist())                if "PSCS Cluster" in filtered_df.columns else []
+
+    # Default to Packaging if present, else first cluster
+    default_cluster = "Packaging" if "Packaging" in clusters else (clusters[0] if clusters else None)
+    default_idx     = clusters.index(default_cluster) if default_cluster in clusters else 0
+
+    col_pick, _ = st.columns([2, 5])
+    with col_pick:
+        chosen_cluster = st.selectbox("🏷️ Choisir un Cluster", clusters,
+                                      index=default_idx, key="cluster_focus_pick")
+
+    if chosen_cluster:
+        # Row 1: spend per category | monthly variation
+        col_c, col_d = st.columns(2)
+        with col_c:
+            st.markdown(f"<div class='section-sub'>📊 Spend par Catégorie — {chosen_cluster}</div>",
+                        unsafe_allow_html=True)
+            st.plotly_chart(ClusterCharts.spend_per_category(filtered_df, chosen_cluster),
+                            use_container_width=True)
+        with col_d:
+            st.markdown(f"<div class='section-sub'>📅 Variation Mensuelle — {chosen_cluster} — {yr} vs {yr1}</div>",
+                        unsafe_allow_html=True)
+            st.plotly_chart(ClusterCharts.cluster_monthly_variation(filtered_df, chosen_cluster, yr),
+                            use_container_width=True)
+
+        st.write("")
+
+        # Row 2: category YoY variation (full width)
+        st.markdown(f"<div class='section-sub'>📉 Variation par Catégorie — {chosen_cluster} — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(ClusterCharts.category_yoy_variation(filtered_df, chosen_cluster, yr),
+                        use_container_width=True)
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2b — FOCUS CATÉGORIE  (category picker driven by chosen_cluster)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🔬 Focus Catégorie — Variation Mensuelle</div>",
+                unsafe_allow_html=True)
+
+    if chosen_cluster:
+        # Categories available in the chosen cluster
+        categories = sorted(
+            filtered_df[filtered_df["PSCS Cluster"] == chosen_cluster]["PSCS Category"]
+            .dropna().unique().tolist()
+        ) if "PSCS Category" in filtered_df.columns else []
+
+        if categories:
+            col_cat, _ = st.columns([2, 5])
+            with col_cat:
+                chosen_category = st.selectbox(
+                    "📦 Choisir une Catégorie",
+                    categories,
+                    index=0,
+                    key="category_focus_pick",
+                )
+
+            st.markdown(
+                f"<div class='section-sub'>📅 Variation Mensuelle — {chosen_category} — {yr} vs {yr1}</div>",
+                unsafe_allow_html=True,
+            )
+            st.plotly_chart(
+                ClusterCharts.category_monthly_variation(filtered_df, chosen_category, yr),
+                use_container_width=True,
+            )
         else:
-            st.info("Données temporelles insuffisantes (< 2 mois).")
-    with c2:
-        fig = WaterfallCharts.cumulatif_annuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_2")
+            st.info("Aucune catégorie disponible pour ce cluster.")
+    else:
+        st.info("Sélectionnez un cluster ci-dessus pour voir les catégories.")
 
     st.divider()
 
-    # ── Ligne 2 : CAPEX/OPEX mensuel + contribution par cluster ──────────
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = WaterfallCharts.capex_opex_mensuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_3")
-    with c4:
-        fig = WaterfallCharts.par_cluster(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_4")
-
-    st.divider()
-
-    # ── Ligne 3 : empilé CAPEX/FI/MM ─────────────────────────────────────
-    fig = TemporalCharts.capex_opex_stacked(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_5")
-
-
-def _tab_pareto_vendors(df: pd.DataFrame):
-    """Onglet 2 — Pareto Fournisseurs"""
-    st.markdown('<div class="section-banner">📈 Pareto Fournisseurs — Loi 80/20</div>',
-                unsafe_allow_html=True)
-    st.caption("Les barres bleues représentent les fournisseurs qui génèrent 80% des dépenses. "
-               "La zone grise = la « long tail ».")
-
-    # Pareto principal
-    fig = ParetoCharts.vendors(df, max_display=30)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_6")
-
-    st.divider()
-
-    c1, c2 = st.columns([1, 1])
-
-    with c1:
-        # Scatter volume vs montant moyen
-        fig = StructureCharts.scatter_volume_spend(df, 'Vendor Name', 'Fournisseurs')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_7")
-
-    with c2:
-        # Évolution empilée top fournisseurs
-        fig = TemporalCharts.evolution_stacked(df, 'Vendor Name', top_n=6,
-                                               title_prefix='Top Fournisseurs')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_8")
-
-    st.divider()
-
-    # Table Pareto annotée
-    st.markdown('<div class="section-banner">📋 Table Pareto — Classement complet Fournisseurs</div>',
-                unsafe_allow_html=True)
-    tbl = ParetoCharts.table_pareto(df, 'Vendor Name', 'Fournisseur')
-    if tbl is not None:
-        # Formater les montants
-        tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-        st.dataframe(tbl, use_container_width=True, hide_index=True,
-                     column_config={
-                         'Rang':        st.column_config.NumberColumn(width='small'),
-                         'Zone Pareto': st.column_config.TextColumn(width='medium'),
-                         '% du Total':  st.column_config.NumberColumn(format="%.2f %%"),
-                         '% Cumulé':    st.column_config.NumberColumn(format="%.2f %%"),
-                     })
-
-    st.divider()
-
-    # ── Drill-down fournisseur ────────────────────────────────────────────
-    st.markdown('<div class="section-banner">🔍 Drill-Down Fournisseur</div>',
-                unsafe_allow_html=True)
-    vendors_sorted = (df.groupby('Vendor Name')['Total  spend']
-                        .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner un fournisseur", ["— Choisir —"] + vendors_sorted,
-                       key="vendor_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_vendor_dd"):
-            st.session_state.drill_context = {'type': 'vendor', 'vendor_name': sel}
-            st.switch_page("pages/drill_down.py")
-
-
-def _tab_pareto_pscs(df: pd.DataFrame):
-    """Onglet 3 — Pareto PSCS"""
-    st.markdown('<div class="section-banner">📈 Pareto PSCS — Catégories & Clusters</div>',
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — PARETO
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>🎯 Analyses Pareto</div>",
                 unsafe_allow_html=True)
 
-    # Pareto catégories
-    fig = ParetoCharts.pscs_category(df, max_display=30)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_9")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        # Pareto clusters
-        fig = ParetoCharts.pscs_cluster(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_10")
-    with c2:
-        # Treemap
-        fig = StructureCharts.treemap_pscs(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_11")
-
-    st.divider()
-
-    # Heatmap mensuelle par catégorie
-    fig = TemporalCharts.heatmap_categorie(df, top_n=15)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_12")
-
-    st.divider()
-
-    # Évolution empilée par catégorie
-    fig = TemporalCharts.evolution_stacked(df, 'PSCS Category', top_n=8,
-                                           title_prefix='Top Catégories PSCS')
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_13")
-
-    st.divider()
-
-    # Tables Pareto
-    col_tab1, col_tab2 = st.columns(2)
-
-    with col_tab1:
-        st.markdown('<div class="section-banner">📋 Table — Catégories PSCS</div>',
+    # Row 1: category pareto | cluster pareto
+    col_e, col_f = st.columns(2)
+    with col_e:
+        st.markdown("<div class='section-sub'>📦 Pareto Catégories → 80% du Spend</div>",
                     unsafe_allow_html=True)
-        tbl = ParetoCharts.table_pareto(df, 'PSCS Category', 'Catégorie')
-        if tbl is not None:
-            tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
-    with col_tab2:
-        st.markdown('<div class="section-banner">📋 Table — Clusters PSCS</div>',
+        st.plotly_chart(ClusterCharts.category_pareto_by_cluster(filtered_df),
+                        use_container_width=True)
+    with col_f:
+        st.markdown("<div class='section-sub'>🗺️ Pareto Clusters → 80% du Spend</div>",
                     unsafe_allow_html=True)
-        tbl2 = ParetoCharts.table_pareto(df, 'PSCS Cluster', 'Cluster')
-        if tbl2 is not None:
-            tbl2['Spend (€)'] = tbl2['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl2, use_container_width=True, hide_index=True)
+        st.plotly_chart(ClusterCharts.cluster_pareto(filtered_df),
+                        use_container_width=True)
 
-    st.divider()
+    st.write("")
 
-    # Drill-down catégorie
-    st.markdown('<div class="section-banner">🔍 Drill-Down Catégorie</div>',
-                unsafe_allow_html=True)
-    cats_sorted = (df.groupby('PSCS Category')['Total  spend']
-                     .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner une catégorie", ["— Choisir —"] + cats_sorted,
-                       key="cat_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_cat_dd"):
-            st.session_state.drill_context = {'type': 'category', 'category_name': sel}
-            st.switch_page("pages/drill_down.py")
-
-
-def _tab_pareto_requesters(df: pd.DataFrame):
-    """Onglet 4 — Pareto Requesters & Groupes Achat"""
-    st.markdown('<div class="section-banner">📈 Pareto Requesters & Groupes Achat</div>',
-                unsafe_allow_html=True)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = ParetoCharts.requesters(df, max_display=25)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_14")
-    with c2:
-        fig = ParetoCharts.purchasing_groups(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_15")
-
-    st.divider()
-
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = StructureCharts.scatter_volume_spend(df, 'Requester', 'Requesters')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_16")
-    with c4:
-        fig = TemporalCharts.evolution_stacked(df, 'Requester', top_n=6,
-                                               title_prefix='Top Requesters')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_17")
-
-    st.divider()
-
-    col_tab1, col_tab2 = st.columns(2)
-    with col_tab1:
-        st.markdown('<div class="section-banner">📋 Table — Requesters</div>',
+    # Row 2: top 10 vendors | top 10 requesters
+    col_g, col_h = st.columns(2)
+    with col_g:
+        st.markdown("<div class='section-sub'>🏢 Top 10 Fournisseurs</div>",
                     unsafe_allow_html=True)
-        tbl = ParetoCharts.table_pareto(df, 'Requester', 'Requester')
-        if tbl is not None:
-            tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
-    with col_tab2:
-        st.markdown('<div class="section-banner">📋 Table — Groupes Achat</div>',
+        st.plotly_chart(ClusterCharts.top10_vendors(filtered_df),
+                        use_container_width=True)
+    with col_h:
+        st.markdown("<div class='section-sub'>👥 Top 10 Requesters</div>",
                     unsafe_allow_html=True)
-        tbl2 = ParetoCharts.table_pareto(df, 'Purchasing Group Name', 'Groupe Achat')
-        if tbl2 is not None:
-            tbl2['Spend (€)'] = tbl2['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl2, use_container_width=True, hide_index=True)
+        st.plotly_chart(ClusterCharts.top10_requesters(filtered_df),
+                        use_container_width=True)
 
     st.divider()
 
-    # Drill-down requester
-    st.markdown('<div class="section-banner">🔍 Drill-Down Requester</div>',
-                unsafe_allow_html=True)
-    req_sorted = (df.groupby('Requester')['Total  spend']
-                    .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner un requester", ["— Choisir —"] + req_sorted,
-                       key="req_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_req_dd"):
-            st.session_state.drill_context = {'type': 'requester', 'requester_name': sel}
-            st.switch_page("pages/drill_down.py")
-
-
-def _tab_structure(df: pd.DataFrame):
-    """Onglet 5 — Structure & Répartition (donuts, scatter, treemap)"""
-    st.markdown('<div class="section-banner">🍩 Répartition CAPEX / OPEX / FI / MM</div>',
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 4 — CAPEX / OPEX
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>💰 CAPEX / OPEX par Catégorie & Cluster</div>",
                 unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = StructureCharts.donut_capex_opex(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_18")
-    with c2:
-        fig = StructureCharts.donut_fi_mm(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_19")
+    col_i, col_j = st.columns(2)
+    with col_i:
+        st.markdown("<div class='section-sub'>📊 CAPEX vs OPEX par Catégorie</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(ClusterCharts.capex_opex_per_category(filtered_df),
+                        use_container_width=True)
+    with col_j:
+        st.markdown("<div class='section-sub'>📊 CAPEX vs OPEX par Cluster</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(ClusterCharts.capex_opex_per_cluster(filtered_df),
+                        use_container_width=True)
 
-    st.divider()
-
-    st.markdown('<div class="section-banner">🌳 Treemap PSCS</div>', unsafe_allow_html=True)
-    fig = StructureCharts.treemap_pscs(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_20")
-
-
-def _tab_explorer(df: pd.DataFrame):
-    """Onglet 6 — Explorateur de données + export"""
-    st.markdown('<div class="section-banner">🔎 Explorateur de Données Brutes</div>',
-                unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns(3)
-    n_rows      = c1.slider("Lignes à afficher", 10, 1000, 100)
-    all_cols    = df.columns.tolist()
-    default_cols = [col for col in [
-        'PO', 'Invoice Posting Date', 'Vendor Name', 'PSCS Cluster',
-        'PSCS Category', 'Requester', 'Total  spend', 'CAPEX Spend',
-        'FI Spend', 'MM Spend'
-    ] if col in df.columns]
-    cols_sel = c2.multiselect("Colonnes", all_cols, default=default_cols[:8])
-
-    if cols_sel:
-        st.dataframe(df[cols_sel].head(n_rows), use_container_width=True, hide_index=True)
-
-    st.divider()
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        "📥 Télécharger données filtrées (CSV)",
-        csv,
-        f"spend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        "text/csv",
-    )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ONGLETS PRINCIPAUX (CODE MANQUANT À RÉINSÉRER)
+# TAB – CAPEX / OPEX
 # ══════════════════════════════════════════════════════════════════════════════
+def _tab_capex_opex(filtered_df):
 
-def _tab_waterfall(df: pd.DataFrame):
-    """Onglet 1 — Waterfall (priorité absolue)"""
-    st.markdown('<div class="section-banner">📊 Waterfall — Avancement & Variations des Dépenses</div>',
-                unsafe_allow_html=True)
-    st.caption("Les graphiques waterfall montrent mois par mois comment les dépenses s'accumulent "
-               "et où les variations positives / négatives se produisent.")
-
-    # ── Ligne 1 : mensuel simple + cumulatif ──────────────────────────────
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = WaterfallCharts.mensuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_1")
-        else:
-            st.info("Données temporelles insuffisantes (< 2 mois).")
-    with c2:
-        fig = WaterfallCharts.cumulatif_annuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_2")
-
-    st.divider()
-
-    # ── Ligne 2 : CAPEX/OPEX mensuel + contribution par cluster ──────────
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = WaterfallCharts.capex_opex_mensuel(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_3")
-    with c4:
-        fig = WaterfallCharts.par_cluster(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_4")
-
-    st.divider()
-
-    # ── Ligne 3 : empilé CAPEX/FI/MM ─────────────────────────────────────
-    fig = TemporalCharts.capex_opex_stacked(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_5")
-
-
-def _tab_pareto_vendors(df: pd.DataFrame):
-    """Onglet 2 — Pareto Fournisseurs"""
-    st.markdown('<div class="section-banner">📈 Pareto Fournisseurs — Loi 80/20</div>',
-                unsafe_allow_html=True)
-    st.caption("Les barres bleues représentent les fournisseurs qui génèrent 80% des dépenses. "
-               "La zone grise = la « long tail ».")
-
-    # Pareto principal
-    fig = ParetoCharts.vendors(df, max_display=30)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_6")
-
-    st.divider()
-
-    c1, c2 = st.columns([1, 1])
-
-    with c1:
-        # Scatter volume vs montant moyen
-        fig = StructureCharts.scatter_volume_spend(df, 'Vendor Name', 'Fournisseurs')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_7")
-
-    with c2:
-        # Évolution empilée top fournisseurs
-        fig = TemporalCharts.evolution_stacked(df, 'Vendor Name', top_n=6,
-                                               title_prefix='Top Fournisseurs')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_8")
-
-    st.divider()
-
-    # Table Pareto annotée
-    st.markdown('<div class="section-banner">📋 Table Pareto — Classement complet Fournisseurs</div>',
-                unsafe_allow_html=True)
-    tbl = ParetoCharts.table_pareto(df, 'Vendor Name', 'Fournisseur')
-    if tbl is not None:
-        # Formater les montants
-        tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-        st.dataframe(tbl, use_container_width=True, hide_index=True,
-                     column_config={
-                         'Rang':        st.column_config.NumberColumn(width='small'),
-                         'Zone Pareto': st.column_config.TextColumn(width='medium'),
-                         '% du Total':  st.column_config.NumberColumn(format="%.2f %%"),
-                         '% Cumulé':    st.column_config.NumberColumn(format="%.2f %%"),
-                     })
-
-    st.divider()
-
-    # ── Drill-down fournisseur ────────────────────────────────────────────
-    st.markdown('<div class="section-banner">🔍 Drill-Down Fournisseur</div>',
-                unsafe_allow_html=True)
-    vendors_sorted = (df.groupby('Vendor Name')['Total  spend']
-                        .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner un fournisseur", ["— Choisir —"] + vendors_sorted,
-                       key="vendor_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_vendor_dd"):
-            st.session_state.drill_context = {'type': 'vendor', 'vendor_name': sel}
-            st.switch_page("pages/drill_down.py")
-
-
-def _tab_pareto_pscs(df: pd.DataFrame):
-    """Onglet 3 — Pareto PSCS"""
-    st.markdown('<div class="section-banner">📈 Pareto PSCS — Catégories & Clusters</div>',
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — BAR PLOTS  (no year filter — reflect sidebar selection)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>📊 Vue Globale — Répartition du Spend</div>",
                 unsafe_allow_html=True)
 
-    # Pareto catégories
-    fig = ParetoCharts.pscs_category(df, max_display=30)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_9")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        # Pareto clusters
-        fig = ParetoCharts.pscs_cluster(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_10")
-    with c2:
-        # Treemap
-        fig = StructureCharts.treemap_pscs(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_11")
-
-    st.divider()
-
-    # Heatmap mensuelle par catégorie
-    fig = TemporalCharts.heatmap_categorie(df, top_n=15)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_12")
-
-    st.divider()
-
-    # Évolution empilée par catégorie
-    fig = TemporalCharts.evolution_stacked(df, 'PSCS Category', top_n=8,
-                                           title_prefix='Top Catégories PSCS')
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_13")
-
-    st.divider()
-
-    # Tables Pareto
-    col_tab1, col_tab2 = st.columns(2)
-
-    with col_tab1:
-        st.markdown('<div class="section-banner">📋 Table — Catégories PSCS</div>',
+    # Row 1 — CAPEX/OPEX total | FI/MM total
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("<div class='section-sub'>💰 Spend CAPEX vs OPEX</div>",
                     unsafe_allow_html=True)
-        tbl = ParetoCharts.table_pareto(df, 'PSCS Category', 'Catégorie')
-        if tbl is not None:
-            tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
-    with col_tab2:
-        st.markdown('<div class="section-banner">📋 Table — Clusters PSCS</div>',
+        st.plotly_chart(CapexOpexTabCharts.capex_opex_total_bar(filtered_df),
+                        use_container_width=True)
+    with col_b:
+        st.markdown("<div class='section-sub'>📑 Spend FI vs MM</div>",
                     unsafe_allow_html=True)
-        tbl2 = ParetoCharts.table_pareto(df, 'PSCS Cluster', 'Cluster')
-        if tbl2 is not None:
-            tbl2['Spend (€)'] = tbl2['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl2, use_container_width=True, hide_index=True)
+        st.plotly_chart(CapexOpexTabCharts.fi_mm_total_bar(filtered_df),
+                        use_container_width=True)
 
-    st.divider()
+    st.write("")
 
-    # Drill-down catégorie
-    st.markdown('<div class="section-banner">🔍 Drill-Down Catégorie</div>',
+    # Row 2 — Stacked per year (full width)
+    st.markdown("<div class='section-sub'>📅 Spend par Année — CAPEX/OPEX Stacked</div>",
                 unsafe_allow_html=True)
-    cats_sorted = (df.groupby('PSCS Category')['Total  spend']
-                     .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner une catégorie", ["— Choisir —"] + cats_sorted,
-                       key="cat_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_cat_dd"):
-            st.session_state.drill_context = {'type': 'category', 'category_name': sel}
-            st.switch_page("pages/drill_down.py")
+    st.plotly_chart(CapexOpexTabCharts.stacked_spend_per_year(filtered_df),
+                    use_container_width=True)
 
+    st.write("")
 
-def _tab_pareto_requesters(df: pd.DataFrame):
-    """Onglet 4 — Pareto Requesters & Groupes Achat"""
-    st.markdown('<div class="section-banner">📈 Pareto Requesters & Groupes Achat</div>',
+    # Row 3 — Monthly grouped by year (full width)
+    st.markdown("<div class='section-sub'>🗓️ Spend Mensuel — comparaison par Année</div>",
+                unsafe_allow_html=True)
+    st.plotly_chart(CapexOpexTabCharts.monthly_spend_by_year(filtered_df),
+                    use_container_width=True)
+
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — VARIATION PLOTS  (single shared year picker)
+    # ════════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='section-banner'>📉 Analyses de Variation (Y vs Y+1)</div>",
                 unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = ParetoCharts.requesters(df, max_display=25)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_14")
-    with c2:
-        fig = ParetoCharts.purchasing_groups(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_15")
+    yr  = _variation_year_picker(filtered_df, key="yr_capex_opex_tab")
+    yr1 = yr + 1
 
-    st.divider()
-
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = StructureCharts.scatter_volume_spend(df, 'Requester', 'Requesters')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_16")
-    with c4:
-        fig = TemporalCharts.evolution_stacked(df, 'Requester', top_n=6,
-                                               title_prefix='Top Requesters')
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_17")
-
-    st.divider()
-
-    col_tab1, col_tab2 = st.columns(2)
-    with col_tab1:
-        st.markdown('<div class="section-banner">📋 Table — Requesters</div>',
+    # Row 1 — CAPEX/OPEX variation bar | Total monthly variation waterfall
+    col_c, col_d = st.columns(2)
+    with col_c:
+        st.markdown(f"<div class='section-sub'>💰 Variation CAPEX/OPEX — {yr} vs {yr1}</div>",
                     unsafe_allow_html=True)
-        tbl = ParetoCharts.table_pareto(df, 'Requester', 'Requester')
-        if tbl is not None:
-            tbl['Spend (€)'] = tbl['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl, use_container_width=True, hide_index=True)
-
-    with col_tab2:
-        st.markdown('<div class="section-banner">📋 Table — Groupes Achat</div>',
+        st.plotly_chart(CapexOpexTabCharts.capex_opex_variation_bar(filtered_df, yr),
+                        use_container_width=True)
+    with col_d:
+        st.markdown(f"<div class='section-sub'>📅 Variation Total Spend Mensuelle — {yr} vs {yr1}</div>",
                     unsafe_allow_html=True)
-        tbl2 = ParetoCharts.table_pareto(df, 'Purchasing Group Name', 'Groupe Achat')
-        if tbl2 is not None:
-            tbl2['Spend (€)'] = tbl2['Spend (€)'].apply(lambda x: f"{x:,.0f} €")
-            st.dataframe(tbl2, use_container_width=True, hide_index=True)
+        st.plotly_chart(CapexOpexTabCharts.total_monthly_variation(filtered_df, yr),
+                        use_container_width=True)
 
-    st.divider()
+    st.write("")
 
-    # Drill-down requester
-    st.markdown('<div class="section-banner">🔍 Drill-Down Requester</div>',
+    # Row 2 — Line chart evolution (full width)
+    st.markdown("<div class='section-sub'>📈 Évolution du Spend sur toute la période</div>",
                 unsafe_allow_html=True)
-    req_sorted = (df.groupby('Requester')['Total  spend']
-                    .sum().sort_values(ascending=False).index.tolist())
-    sel = st.selectbox("Sélectionner un requester", ["— Choisir —"] + req_sorted,
-                       key="req_dd")
-    if sel != "— Choisir —":
-        if st.button(f"🔍 Analyser {sel}", key="btn_req_dd"):
-            st.session_state.drill_context = {'type': 'requester', 'requester_name': sel}
-            st.switch_page("pages/drill_down.py")
+    st.plotly_chart(CapexOpexTabCharts.spend_evolution_line(filtered_df),
+                    use_container_width=True)
 
+    st.write("")
 
-def _tab_structure(df: pd.DataFrame):
-    """Onglet 5 — Structure & Répartition (donuts, scatter, treemap)"""
-    st.markdown('<div class="section-banner">🍩 Répartition CAPEX / OPEX / FI / MM</div>',
-                unsafe_allow_html=True)
+    # Row 3 — CAPEX monthly wf | OPEX monthly wf
+    col_e, col_f = st.columns(2)
+    with col_e:
+        st.markdown(f"<div class='section-sub'>🏗️ Variation CAPEX Mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexTabCharts.capex_monthly_var(filtered_df, yr),
+                        use_container_width=True)
+    with col_f:
+        st.markdown(f"<div class='section-sub'>📋 Variation OPEX Mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexTabCharts.opex_monthly_var(filtered_df, yr),
+                        use_container_width=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        fig = StructureCharts.donut_capex_opex(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_18")
-    with c2:
-        fig = StructureCharts.donut_fi_mm(df)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True, key="main_19")
+    st.write("")
 
-    st.divider()
+    # Row 4 — MM monthly wf | FI monthly wf
+    col_g, col_h = st.columns(2)
+    with col_g:
+        st.markdown(f"<div class='section-sub'>📦 Variation MM Mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexTabCharts.mm_monthly_var(filtered_df, yr),
+                        use_container_width=True)
+    with col_h:
+        st.markdown(f"<div class='section-sub'>📑 Variation FI Mensuelle — {yr} vs {yr1}</div>",
+                    unsafe_allow_html=True)
+        st.plotly_chart(CapexOpexTabCharts.fi_monthly_var(filtered_df, yr),
+                        use_container_width=True)
 
-    st.markdown('<div class="section-banner">🌳 Treemap PSCS</div>', unsafe_allow_html=True)
-    fig = StructureCharts.treemap_pscs(df)
-    if fig:
-        st.plotly_chart(fig, use_container_width=True, key="main_20")
-
-
-def _tab_explorer(df: pd.DataFrame):
-    """Onglet 6 — Explorateur de données + export"""
-    st.markdown('<div class="section-banner">🔎 Explorateur de Données Brutes</div>',
-                unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns(3)
-    n_rows      = c1.slider("Lignes à afficher", 10, 1000, 100)
-    all_cols    = df.columns.tolist()
-    default_cols = [col for col in [
-        'PO', 'Invoice Posting Date', 'Vendor Name', 'PSCS Cluster',
-        'PSCS Category', 'Requester', 'Total  spend', 'CAPEX Spend',
-        'FI Spend', 'MM Spend'
-    ] if col in df.columns]
-    cols_sel = c2.multiselect("Colonnes", all_cols, default=default_cols[:8])
-
-    if cols_sel:
-        st.dataframe(df[cols_sel].head(n_rows), use_container_width=True, hide_index=True)
-
-    st.divider()
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        "📥 Télécharger données filtrées (CSV)",
-        csv,
-        f"spend_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        "text/csv",
-    )
-
-    
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
-
 def main():
-    _init()
-
-    # Header
-    col_t, col_anom, col_btn = st.columns([5, 1, 1])
-    with col_t:
-        st.title("📊 Spend Analytics Dashboard")
-        st.caption("Waterfall · Pareto 80/20 · Drill-Down · Détection d'anomalies")
-    with col_anom:
-        if st.session_state.data_loaded:
-            if st.button("🚨 Anomalies", use_container_width=True, key="btn_anomalies",
-                         help="Ouvrir la page de détection d'anomalies"):
-                st.switch_page("pages/anomaly_detection.py")
-    with col_btn:
-        if st.session_state.data_loaded:
-            if st.button("🔄 Recharger", use_container_width=True):
-                st.session_state.update(data_loaded=False, df=None, drill_context={})
-                st.rerun()
-
-    st.divider()
-
-    # Upload
-    if not st.session_state.data_loaded:
-        st.subheader("📁 Chargement des données")
-        uploaded = st.file_uploader(
-            "Choisissez votre fichier Excel de spends",
-            type=['xlsx', 'xls'],
-            help="Colonnes attendues : PO, Vendor Name, Total  spend, CAPEX Spend, "
-                 "FI Spend, MM Spend, Invoice Posting Date, PSCS Cluster, PSCS Category, …",
+    # ── Logo & Header ─────────────────────────────────────────────────────────
+    col_logo, col_title = st.columns([1, 4])
+    with col_logo:
+        st.image("lafarge.png", width=140)
+    with col_title:
+        st.markdown(
+            '<h2 style="color:#1B3A5C;font-family:Segoe UI,Arial,sans-serif;'
+            'font-weight:800;margin-bottom:0;">Spend Analytics Dashboard</h2>'
+            '<p style="color:#E74C3C;font-family:Segoe UI,Arial,sans-serif;'
+            'font-weight:600;margin-top:2px;">Holcim Lafarge – Procurement Intelligence</p>',
+            unsafe_allow_html=True,
         )
+
+    if not st.session_state.data_loaded:
+        uploaded = st.file_uploader('Choisissez votre fichier Excel', type=['xlsx', 'xls'])
         if uploaded:
-            with st.spinner("🔄 Traitement en cours…"):
-                df, err = st.session_state.processor.load_and_process(uploaded)
+            with st.spinner('Traitement en cours…'):
+                df, err = processor.load_and_process(uploaded)
             if err:
-                st.error(f"❌ {err}")
+                st.error(err)
             else:
-                st.session_state.df = df
+                st.session_state.df          = df
                 st.session_state.data_loaded = True
-                st.success(f"✅ {len(df):,} lignes chargées")
+                st.success(f'✅ {len(df):,} lignes chargées avec succès')
                 st.rerun()
         return
 
-    # Filtres
     filters     = _sidebar_filters(st.session_state.df)
-    filtered_df = st.session_state.processor.apply_filters(st.session_state.df, filters)
-    st.sidebar.divider()
-    st.sidebar.success(f"📊 **{len(filtered_df):,}** lignes")
+    filtered_df = processor.apply_filters(st.session_state.df, filters)
 
     if len(filtered_df) == 0:
-        st.warning("⚠️ Aucune donnée après filtrage — réduisez les filtres.")
+        st.warning("Aucune donnée après filtrage")
         return
 
-    # KPIs
-    stats = st.session_state.processor.get_summary_stats(filtered_df)
-    _kpis(stats)
+    comp_stats = processor.get_comparative_stats(st.session_state.df, filters)
+    _kpis(comp_stats, filters.get('year'))
     st.divider()
 
-    # Onglets
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📊 Waterfall",
-        "🏢 Pareto Vendors",
-        "📦 Pareto PSCS",
-        "👥 Pareto Requesters",
-        "🍩 Structure",
-        "🔎 Données",
-    ])
-
-    with tab1: _tab_waterfall(filtered_df)
-    with tab2: _tab_pareto_vendors(filtered_df)
-    with tab3: _tab_pareto_pscs(filtered_df)
-    with tab4: _tab_pareto_requesters(filtered_df)
-    with tab5: _tab_structure(filtered_df)
-    with tab6: _tab_explorer(filtered_df)
+    tab_overview, tab_cluster, tab_co = st.tabs(['🗺️ Overview', '🏷️ Clusters', '💰 CAPEX/OPEX'])
+    with tab_overview:
+        _tab_overview(filtered_df=filtered_df)
+    with tab_cluster:
+        _tab_cluster(filtered_df=filtered_df)
+    with tab_co:
+        _tab_capex_opex(filtered_df=filtered_df)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
