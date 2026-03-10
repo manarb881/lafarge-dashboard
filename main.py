@@ -673,7 +673,12 @@ def main():
     # ── Logo & Header ─────────────────────────────────────────────────────────
     col_logo, col_title = st.columns([1, 4])
     with col_logo:
-        st.image("lafarge.png", width=140)
+        try:
+            # Use SVG logo as requested
+            st.image("holcim_logo_color.svg", width=140)
+        except Exception:
+            # Fallback if SVG fails or is missing
+            st.markdown("<h3>🏗️ Lafarge</h3>", unsafe_allow_html=True)
     with col_title:
         st.markdown(
             '<h2 style="color:#1B3A5C;font-family:Segoe UI,Arial,sans-serif;'
